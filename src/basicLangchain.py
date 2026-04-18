@@ -1,59 +1,87 @@
-import streamlit as st
-import os
-from langchain_openai import OpenAI
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_core.documents import Document
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from dotenv import load_dotenv
+load_dotenv()
+
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# --- 1. Basic LLM Call ---
+llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0.7)
 
-# Set up the Streamlit page
-st.set_page_config(page_title="Basic Chatbot about Damian", page_icon=":book:")
-st.title("What Do you want to know about Damian?")
+# --- 2. Prompt Templates ---
+# Instead of raw strings, LangChain uses structured templates
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant that explains {topic} concepts clearly and concisely."),
+    ("human", "{question}")
+])
 
+# --- 3. Chains (LCEL - LangChain Expression Language) ---
+# The | operator pipes components together like Unix pipes
+chain = prompt | llm | StrOutputParser()
 
-# Define the string containing the details
-details = """
-Damian Montero is a 52 year old developer and AI fanatic with a teen aged daughter and a wife.
-He's been married for 25 years and has a passion for technology.
-This morning he had a bagel and a coffee for breakfast but currently he's in love with everything to do with AI.
-"""
+response = chain.invoke({
+    "topic": "machine learning",
+    "question": "What is gradient descent in one paragraph?"
+})
+print("=== Basic Chain ===")
+print(response)
 
-# Create a LangChain document from the string
-document = Document(page_content=details)
+# --- 4. Memory / Conversation History ---
+from langchain_core.prompts import MessagesPlaceholder
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
-# Load the document into a vector store
-embeddings = OpenAIEmbeddings()  # Use OpenAI embeddings
-vectorstore = FAISS.from_documents([document], embeddings)
-retriever = vectorstore.as_retriever()
+chat_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a concise AI tutor."),
+    MessagesPlaceholder(variable_name="history"),
+    ("human", "{input}")
+])
 
-# Initialize the LLM
-llm = OpenAI(temperature=0.7)  # Use OpenAI LLM
+store = {}  # session_id -> history
 
-# Create a prompt template for QA
-template = """Answer the question based only on the following context:
-{context}
+def get_session_history(session_id: str):
+    if session_id not in store:
+        store[session_id] = InMemoryChatMessageHistory()
+    return store[session_id]
 
-Question: {question}
-
-Answer:"""
-prompt = PromptTemplate.from_template(template)
-
-# Create the chain using LCEL
-chain = (
-    {"context": retriever, "question": RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
+conversation = RunnableWithMessageHistory(
+    chat_prompt | llm | StrOutputParser(),
+    get_session_history,
+    input_messages_key="input",
+    history_messages_key="history"
 )
 
-# Accept user queries
-query = st.text_input("Ask a question about the details:")
+config = {"configurable": {"session_id": "demo-session"}}
 
-if query:
-    # Perform the query
-    response = chain.invoke(query)
-    st.write(f"**Answer:** {response}")
+print("\n=== Conversation with Memory ===")
+r1 = conversation.invoke({"input": "My name is Alex."}, config=config)
+print(f"Bot: {r1}")
+
+r2 = conversation.invoke({"input": "What's my name?"}, config=config)
+print(f"Bot: {r2}")  # It remembers!
+
+# --- 5. Structured Output ---
+from pydantic import BaseModel, Field
+from langchain_core.output_parsers import JsonOutputParser
+
+class MovieReview(BaseModel):
+    title: str = Field(description="Movie title")
+    rating: int = Field(description="Rating out of 10")
+    summary: str = Field(description="One sentence summary")
+
+parser = JsonOutputParser(pydantic_object=MovieReview)
+
+review_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a movie critic. Respond in JSON format.\n{format_instructions}"),
+    ("human", "Review the movie: {movie}")
+])
+
+review_chain = review_prompt | llm | parser
+
+print("\n=== Structured Output ===")
+review = review_chain.invoke({
+    "movie": "Inception",
+    "format_instructions": parser.get_format_instructions()
+})
+print(review)  # Returns a clean Python dict
