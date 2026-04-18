@@ -11,8 +11,8 @@ from langchain_core.output_parsers import StrOutputParser
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Set up the Streamlit page
-st.set_page_config(page_title="Chat with a Variable", page_icon=":book:")
-st.title("Basic LLM with some intelligence!")
+st.set_page_config(page_title="Basic Chatbot about Damian", page_icon=":book:")
+st.title("What Do you want to know about Damian?")
 
 
 # Define the string containing the details
